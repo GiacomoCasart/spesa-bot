@@ -223,6 +223,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 inizializza_file()
 
 app = ApplicationBuilder().token(TOKEN).build()
+import asyncio
+
+async def setup():
+    await app.initialize()
+
+asyncio.run(setup())
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
