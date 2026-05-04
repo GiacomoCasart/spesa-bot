@@ -51,6 +51,9 @@ def calcola_saldi():
 def calcola_saldo_fino_a(mese):
     saldi = {"banca": 0, "salvadanaio": 0}
 
+    if not os.path.isfile(FILE):
+        return saldi
+
     with open(FILE, "r") as f:
         for r in csv.DictReader(f):
             if r["data"][:7] > mese:
@@ -107,6 +110,7 @@ def lista_mesi():
 def ultime_operazioni(n=5):
     if not os.path.isfile(FILE):
         return []
+
     with open(FILE, "r") as f:
         return list(csv.DictReader(f))[-n:]
 
@@ -130,6 +134,7 @@ async def export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not os.path.isfile(FILE):
         await update.message.reply_text("Nessun file disponibile")
         return
+
     with open(FILE, "rb") as f:
         await update.message.reply_document(f, filename="spese.csv")
 
@@ -191,11 +196,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data.clear()
         context.user_data["stato"] = "scegli_mese"
-        await update.message.reply_text("Mesi:\n"+"\n".join(mesi))
+
+        await update.message.reply_text("Mesi:\n" + "\n".join(mesi))
         return
 
     if text == "🧾 Ultime":
         ops = ultime_operazioni()
+
         if not ops:
             await update.message.reply_text("Nessuna operazione", reply_markup=menu_principale())
             return
@@ -275,7 +282,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("Usa i pulsanti.", reply_markup=menu_principale())
 
-# ---------------- WEBHOOK ----------------
+# ---------------- START BOT ----------------
 
 inizializza_file()
 
@@ -286,13 +293,13 @@ app.add_handler(CommandHandler("menu", start))
 app.add_handler(CommandHandler("export", export))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-loop = asyncio.get_event_loop()
-
 async def setup():
     await app.initialize()
     await app.start()
 
-loop.run_until_complete(setup())
+asyncio.run(setup())
+
+# ---------------- WEB SERVER ----------------
 
 flask_app = Flask(__name__)
 
@@ -300,7 +307,7 @@ flask_app = Flask(__name__)
 def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, app.bot)
-    loop.create_task(app.process_update(update))
+    asyncio.run(app.process_update(update))
     return "ok"
 
 @flask_app.route("/")
