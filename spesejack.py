@@ -230,10 +230,14 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 flask_app = Flask(__name__)
 
 @flask_app.route(f"/{TOKEN}", methods=["POST"])
-async def webhook():
+def webhook():
+    import asyncio
+
     data = request.get_json(force=True)
     update = Update.de_json(data, app.bot)
-    await app.process_update(update)
+
+    asyncio.run(app.process_update(update))
+
     return "ok"
 
 if __name__ == "__main__":
