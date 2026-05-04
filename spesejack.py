@@ -7,7 +7,6 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 TOKEN = os.environ.get("TOKEN")
-
 FILE = "spese.csv"
 
 CATEGORIE_USCITE = ["cibo", "affitto", "svago", "trasporti", "altro"]
@@ -26,7 +25,7 @@ def salva_spesa(spesa):
         writer = csv.DictWriter(f, fieldnames=["data", "tipo", "categoria", "importo", "conto"])
         writer.writerow(spesa)
 
-# ---------------- SALDO DINAMICO ----------------
+# ---------------- SALDO ----------------
 
 def calcola_saldi():
     saldi = {"banca": 0, "salvadanaio": 0}
@@ -36,11 +35,32 @@ def calcola_saldi():
 
     with open(FILE, "r") as f:
         for r in csv.DictReader(f):
-            imp = float(r["importo"])
             conto = r["conto"].strip().lower()
-
-            if conto not in ["banca", "salvadanaio"]:
+            if conto not in saldi:
                 continue
+
+            imp = float(r["importo"])
+
+            if r["tipo"] == "entrata":
+                saldi[conto] += imp
+            else:
+                saldi[conto] -= imp
+
+    return saldi
+
+def calcola_saldo_fino_a(mese):
+    saldi = {"banca": 0, "salvadanaio": 0}
+
+    with open(FILE, "r") as f:
+        for r in csv.DictReader(f):
+            if r["data"][:7] > mese:
+                continue
+
+            conto = r["conto"].strip().lower()
+            if conto not in saldi:
+                continue
+
+            imp = float(r["importo"])
 
             if r["tipo"] == "entrata":
                 saldi[conto] += imp
@@ -74,30 +94,6 @@ def calcola_riepilogo_mese(mese):
 
     return entrate, uscite, categorie
 
-def calcola_saldo_fino_a(mese):
-    saldo = {"banca": 0, "salvadanaio": 0}
-
-    if not os.path.isfile(FILE):
-        return saldo
-
-    with open(FILE, "r") as f:
-        for r in csv.DictReader(f):
-            if r["data"][:7] > mese:
-                continue
-
-            imp = float(r["importo"])
-            conto = r["conto"].strip().lower()
-
-            if conto not in ["banca", "salvadanaio"]:
-                continue
-
-            if r["tipo"] == "entrata":
-                saldo[conto] += imp
-            else:
-                saldo[conto] -= imp
-
-    return saldo
-
 def lista_mesi():
     if not os.path.isfile(FILE):
         return []
@@ -111,7 +107,6 @@ def lista_mesi():
 def ultime_operazioni(n=5):
     if not os.path.isfile(FILE):
         return []
-
     with open(FILE, "r") as f:
         return list(csv.DictReader(f))[-n:]
 
@@ -135,7 +130,6 @@ async def export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not os.path.isfile(FILE):
         await update.message.reply_text("Nessun file disponibile")
         return
-
     with open(FILE, "rb") as f:
         await update.message.reply_document(f, filename="spese.csv")
 
@@ -143,18 +137,18 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     stato = context.user_data.get("stato")
 
-    # -------- ANNULLA --------
+    # ANNULLA
     if text == "❌ Annulla":
         context.user_data.clear()
         await update.message.reply_text("Operazione annullata.", reply_markup=menu_principale())
         return
 
-    # -------- BACKUP --------
+    # BACKUP
     if text == "📥 Backup":
         await export(update, context)
         return
 
-    # -------- MENU --------
+    # MENU
     if text == "➖ Spesa":
         context.user_data.clear()
         context.user_data.update({"tipo": "uscita", "stato": "categoria"})
@@ -183,11 +177,10 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mese = datetime.now().strftime("%Y-%m")
         e,u,c = calcola_riepilogo_mese(mese)
 
-        msg = f"📊 {mese}\n\nEntrate: +{e}€\nUscite: -{u}€\n\nSaldo: {e-u}€\n\n"
-        for k,v in c.items():
-            msg += f"{k}: {'+' if v>=0 else ''}{v}€\n"
-
-        await update.message.reply_text(msg, reply_markup=menu_principale())
+        await update.message.reply_text(
+            f"📊 {mese}\n\nEntrate: +{e}€\nUscite: -{u}€\nSaldo mese: {e-u}€",
+            reply_markup=menu_principale()
+        )
         return
 
     if text == "📂 Storico":
@@ -198,7 +191,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data.clear()
         context.user_data["stato"] = "scegli_mese"
-        await update.message.reply_text("Mesi:\n" + "\n".join(mesi))
+        await update.message.reply_text("Mesi:\n"+"\n".join(mesi))
         return
 
     if text == "🧾 Ultime":
@@ -214,25 +207,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, reply_markup=menu_principale())
         return
 
-    # -------- STATI --------
+    # STATI
     if stato == "scegli_mese":
-        mese = text
-    
-        e, u, c = calcola_riepilogo_mese(mese)
-        saldo = calcola_saldo_fino_a(mese)
+        e,u,c = calcola_riepilogo_mese(text)
+        saldo = calcola_saldo_fino_a(text)
         totale = saldo["banca"] + saldo["salvadanaio"]
 
-        msg = f"""📊 {mese}
-
-Entrate mese: +{e}€
-Uscite mese: -{u}€
-
-Saldo mese: {e-u}€
-Saldo totale: {totale}€
-"""
-
-        for k, v in c.items():
-            msg += f"{k}: {'+' if v>=0 else ''}{v}€\n"
+        msg = f"📊 {text}\n\nEntrate: +{e}€\nUscite: -{u}€\nSaldo mese: {e-u}€\nSaldo totale: {totale}€"
 
         context.user_data.clear()
         await update.message.reply_text(msg, reply_markup=menu_principale())
@@ -305,11 +286,13 @@ app.add_handler(CommandHandler("menu", start))
 app.add_handler(CommandHandler("export", export))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-async def main():
+loop = asyncio.get_event_loop()
+
+async def setup():
     await app.initialize()
     await app.start()
 
-asyncio.run(main())
+loop.run_until_complete(setup())
 
 flask_app = Flask(__name__)
 
@@ -317,7 +300,7 @@ flask_app = Flask(__name__)
 def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, app.bot)
-    asyncio.run(app.process_update(update))
+    loop.create_task(app.process_update(update))
     return "ok"
 
 @flask_app.route("/")
