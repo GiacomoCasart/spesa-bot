@@ -37,7 +37,10 @@ def calcola_saldi():
     with open(FILE, "r") as f:
         for r in csv.DictReader(f):
             imp = float(r["importo"])
-            conto = r["conto"]
+            conto = r["conto"].strip().lower()
+
+            if conto not in ["banca", "salvadanaio"]:
+                continue
 
             if r["tipo"] == "entrata":
                 saldi[conto] += imp
@@ -71,6 +74,30 @@ def calcola_riepilogo_mese(mese):
 
     return entrate, uscite, categorie
 
+def calcola_saldo_fino_a(mese):
+    saldo = {"banca": 0, "salvadanaio": 0}
+
+    if not os.path.isfile(FILE):
+        return saldo
+
+    with open(FILE, "r") as f:
+        for r in csv.DictReader(f):
+            if r["data"][:7] > mese:
+                continue
+
+            imp = float(r["importo"])
+            conto = r["conto"].strip().lower()
+
+            if conto not in ["banca", "salvadanaio"]:
+                continue
+
+            if r["tipo"] == "entrata":
+                saldo[conto] += imp
+            else:
+                saldo[conto] -= imp
+
+    return saldo
+
 def lista_mesi():
     if not os.path.isfile(FILE):
         return []
@@ -84,7 +111,9 @@ def lista_mesi():
 def ultime_operazioni(n=5):
     if not os.path.isfile(FILE):
         return []
-    return list(csv.DictReader(open(FILE)))[-n:]
+
+    with open(FILE, "r") as f:
+        return list(csv.DictReader(f))[-n:]
 
 # ---------------- UI ----------------
 
@@ -106,6 +135,7 @@ async def export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not os.path.isfile(FILE):
         await update.message.reply_text("Nessun file disponibile")
         return
+
     with open(FILE, "rb") as f:
         await update.message.reply_document(f, filename="spese.csv")
 
@@ -168,7 +198,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data.clear()
         context.user_data["stato"] = "scegli_mese"
-        await update.message.reply_text("Mesi:\n"+"\n".join(mesi))
+        await update.message.reply_text("Mesi:\n" + "\n".join(mesi))
         return
 
     if text == "🧾 Ultime":
@@ -185,12 +215,23 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # -------- STATI --------
-
     if stato == "scegli_mese":
-        e,u,c = calcola_riepilogo_mese(text)
+        mese = text
+    
+        e, u, c = calcola_riepilogo_mese(mese)
+        saldo = calcola_saldo_fino_a(mese)
+        totale = saldo["banca"] + saldo["salvadanaio"]
 
-        msg = f"📊 {text}\n\nEntrate: +{e}€\nUscite: -{u}€\n\nSaldo: {e-u}€\n\n"
-        for k,v in c.items():
+        msg = f"""📊 {mese}
+
+Entrate mese: +{e}€
+Uscite mese: -{u}€
+
+Saldo mese: {e-u}€
+Saldo totale: {totale}€
+"""
+
+        for k, v in c.items():
             msg += f"{k}: {'+' if v>=0 else ''}{v}€\n"
 
         context.user_data.clear()
