@@ -17,13 +17,30 @@ CATEGORIE_ENTRATE = ["stipendio", "regalo", "rimborso", "altro"]
 def inizializza_file():
     if not os.path.isfile(FILE):
         with open(FILE, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["data", "tipo", "categoria", "importo", "conto"])
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["data", "tipo", "categoria", "importo", "conto"]
+            )
             writer.writeheader()
 
 def salva_spesa(spesa):
     with open(FILE, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["data", "tipo", "categoria", "importo", "conto"])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["data", "tipo", "categoria", "importo", "conto"]
+        )
         writer.writerow(spesa)
+
+# ---------------- UTILS ----------------
+
+def parse_importo(val):
+    try:
+        return float(val)
+    except:
+        return 0.0
+
+def parse_conto(val):
+    return val.strip().lower()
 
 # ---------------- SALDO ----------------
 
@@ -35,11 +52,11 @@ def calcola_saldi():
 
     with open(FILE, "r") as f:
         for r in csv.DictReader(f):
-            conto = r["conto"].strip().lower()
+            conto = parse_conto(r["conto"])
             if conto not in saldi:
                 continue
 
-            imp = float(r["importo"])
+            imp = parse_importo(r["importo"])
 
             if r["tipo"] == "entrata":
                 saldi[conto] += imp
@@ -59,11 +76,11 @@ def calcola_saldo_fino_a(mese):
             if r["data"][:7] > mese:
                 continue
 
-            conto = r["conto"].strip().lower()
+            conto = parse_conto(r["conto"])
             if conto not in saldi:
                 continue
 
-            imp = float(r["importo"])
+            imp = parse_importo(r["importo"])
 
             if r["tipo"] == "entrata":
                 saldi[conto] += imp
@@ -85,7 +102,7 @@ def calcola_riepilogo_mese(mese):
             if not r["data"].startswith(mese):
                 continue
 
-            imp = float(r["importo"])
+            imp = parse_importo(r["importo"])
             cat = r["categoria"]
 
             if r["tipo"] == "entrata":
@@ -105,6 +122,7 @@ def lista_mesi():
     with open(FILE, "r") as f:
         for r in csv.DictReader(f):
             mesi.add(r["data"][:7])
+
     return sorted(mesi, reverse=True)
 
 def ultime_operazioni(n=5):
@@ -142,21 +160,23 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     stato = context.user_data.get("stato")
 
-    # ANNULLA
+    # -------- ANNULLA --------
     if text == "❌ Annulla":
         context.user_data.clear()
         await update.message.reply_text("Operazione annullata.", reply_markup=menu_principale())
         return
 
-    # BACKUP
+    # -------- BACKUP --------
     if text == "📥 Backup":
         await export(update, context)
         return
 
-    # MENU
+    # -------- MENU --------
+
     if text == "➖ Spesa":
         context.user_data.clear()
         context.user_data.update({"tipo": "uscita", "stato": "categoria"})
+
         kb = [[c] for c in CATEGORIE_USCITE] + [["❌ Annulla"]]
         await update.message.reply_text("Scegli categoria:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
@@ -164,6 +184,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "➕ Entrata":
         context.user_data.clear()
         context.user_data.update({"tipo": "entrata", "stato": "categoria"})
+
         kb = [[c] for c in CATEGORIE_ENTRATE] + [["❌ Annulla"]]
         await update.message.reply_text("Scegli categoria:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
@@ -180,12 +201,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "📊 Riepilogo":
         mese = datetime.now().strftime("%Y-%m")
-        e,u,c = calcola_riepilogo_mese(mese)
+        e, u, c = calcola_riepilogo_mese(mese)
 
-        await update.message.reply_text(
-            f"📊 {mese}\n\nEntrate: +{e}€\nUscite: -{u}€\nSaldo mese: {e-u}€",
-            reply_markup=menu_principale()
-        )
+        msg = f"📊 {mese}\n\nEntrate: +{e}€\nUscite: -{u}€\nSaldo mese: {e-u}€\n\n"
+        for k, v in c.items():
+            msg += f"{k}: {'+' if v >= 0 else ''}{v}€\n"
+
+        await update.message.reply_text(msg, reply_markup=menu_principale())
         return
 
     if text == "📂 Storico":
@@ -194,10 +216,15 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Nessun dato", reply_markup=menu_principale())
             return
 
-        context.user_data.clear()
-        context.user_data["stato"] = "scegli_mese"
+        msg = "📂 Storico:\n\n"
 
-        await update.message.reply_text("Mesi:\n" + "\n".join(mesi))
+        for mese in mesi:
+            saldo = calcola_saldo_fino_a(mese)
+            totale = saldo["banca"] + saldo["salvadanaio"]
+
+            msg += f"{mese} → {totale}€ (B:{saldo['banca']} S:{saldo['salvadanaio']})\n"
+
+        await update.message.reply_text(msg, reply_markup=menu_principale())
         return
 
     if text == "🧾 Ultime":
@@ -214,17 +241,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, reply_markup=menu_principale())
         return
 
-    # STATI
-    if stato == "scegli_mese":
-        e,u,c = calcola_riepilogo_mese(text)
-        saldo = calcola_saldo_fino_a(text)
-        totale = saldo["banca"] + saldo["salvadanaio"]
-
-        msg = f"📊 {text}\n\nEntrate: +{e}€\nUscite: -{u}€\nSaldo mese: {e-u}€\nSaldo totale: {totale}€"
-
-        context.user_data.clear()
-        await update.message.reply_text(msg, reply_markup=menu_principale())
-        return
+    # -------- STATI --------
 
     if stato == "categoria":
         tipo = context.user_data["tipo"]
