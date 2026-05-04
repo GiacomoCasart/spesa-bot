@@ -162,6 +162,7 @@ async def setup():
 asyncio.run(setup())
 
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("menu", start)) 
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
 flask_app = Flask(__name__)
