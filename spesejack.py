@@ -1,6 +1,5 @@
 import os
 import csv
-import json
 import asyncio
 from datetime import datetime
 from flask import Flask, request
@@ -10,7 +9,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 TOKEN = os.environ.get("TOKEN")
 
 FILE = "spese.csv"
-SALDI_FILE = "saldi.json"
 
 CATEGORIE_USCITE = ["cibo", "affitto", "svago", "trasporti", "altro"]
 CATEGORIE_ENTRATE = ["stipendio", "regalo", "rimborso", "altro"]
@@ -23,25 +21,30 @@ def inizializza_file():
             writer = csv.DictWriter(f, fieldnames=["data", "tipo", "categoria", "importo", "conto"])
             writer.writeheader()
 
-def carica_saldi():
-    if os.path.isfile(SALDI_FILE):
-        with open(SALDI_FILE, "r") as f:
-            return json.load(f)
-    else:
-        saldi = {"banca": 0, "salvadanaio": 0}
-        salva_saldi(saldi)
-        return saldi
-
-def salva_saldi(saldi):
-    with open(SALDI_FILE, "w") as f:
-        json.dump(saldi, f, indent=4)
-
 def salva_spesa(spesa):
     with open(FILE, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["data", "tipo", "categoria", "importo", "conto"])
         writer.writerow(spesa)
 
-SALDI = carica_saldi()
+# ---------------- SALDO DINAMICO ----------------
+
+def calcola_saldi():
+    saldi = {"banca": 0, "salvadanaio": 0}
+
+    if not os.path.isfile(FILE):
+        return saldi
+
+    with open(FILE, "r") as f:
+        for r in csv.DictReader(f):
+            imp = float(r["importo"])
+            conto = r["conto"]
+
+            if r["tipo"] == "entrata":
+                saldi[conto] += imp
+            else:
+                saldi[conto] -= imp
+
+    return saldi
 
 # ---------------- ANALISI ----------------
 
@@ -108,6 +111,7 @@ async def export(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    stato = context.user_data.get("stato")
 
     # -------- ANNULLA --------
     if text == "❌ Annulla":
@@ -120,8 +124,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await export(update, context)
         return
 
-    # -------- MENU (PRIORITÀ) --------
-
+    # -------- MENU --------
     if text == "➖ Spesa":
         context.user_data.clear()
         context.user_data.update({"tipo": "uscita", "stato": "categoria"})
@@ -137,9 +140,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "💰 Saldo":
-        tot = SALDI["banca"] + SALDI["salvadanaio"]
+        saldi = calcola_saldi()
+        tot = saldi["banca"] + saldi["salvadanaio"]
+
         await update.message.reply_text(
-            f"Banca: {SALDI['banca']}€\nSalvadanaio: {SALDI['salvadanaio']}€\nTotale: {tot}€",
+            f"Banca: {saldi['banca']}€\nSalvadanaio: {saldi['salvadanaio']}€\nTotale: {tot}€",
             reply_markup=menu_principale()
         )
         return
@@ -147,9 +152,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "📊 Riepilogo":
         mese = datetime.now().strftime("%Y-%m")
         e,u,c = calcola_riepilogo_mese(mese)
+
         msg = f"📊 {mese}\n\nEntrate: +{e}€\nUscite: -{u}€\n\nSaldo: {e-u}€\n\n"
         for k,v in c.items():
             msg += f"{k}: {'+' if v>=0 else ''}{v}€\n"
+
         await update.message.reply_text(msg, reply_markup=menu_principale())
         return
 
@@ -158,6 +165,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not mesi:
             await update.message.reply_text("Nessun dato", reply_markup=menu_principale())
             return
+
         context.user_data.clear()
         context.user_data["stato"] = "scegli_mese"
         await update.message.reply_text("Mesi:\n"+"\n".join(mesi))
@@ -168,21 +176,23 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not ops:
             await update.message.reply_text("Nessuna operazione", reply_markup=menu_principale())
             return
+
         msg = "🧾 Ultime:\n\n"
         for o in ops:
             msg += f"{o['data']} | {o['categoria']} | {'+' if o['tipo']=='entrata' else '-'}{o['importo']}€\n"
+
         await update.message.reply_text(msg, reply_markup=menu_principale())
         return
 
     # -------- STATI --------
 
-    stato = context.user_data.get("stato")
-
     if stato == "scegli_mese":
         e,u,c = calcola_riepilogo_mese(text)
+
         msg = f"📊 {text}\n\nEntrate: +{e}€\nUscite: -{u}€\n\nSaldo: {e-u}€\n\n"
         for k,v in c.items():
             msg += f"{k}: {'+' if v>=0 else ''}{v}€\n"
+
         context.user_data.clear()
         await update.message.reply_text(msg, reply_markup=menu_principale())
         return
@@ -221,14 +231,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conto = context.user_data["conto"]
 
             if tipo == "uscita":
-                if SALDI[conto] < importo:
+                saldi = calcola_saldi()
+                if saldi[conto] < importo:
                     await update.message.reply_text("❌ Fondi insufficienti")
                     return
-                SALDI[conto] -= importo
-            else:
-                SALDI[conto] += importo
 
-            salva_saldi(SALDI)
             salva_spesa({
                 "data": datetime.now().strftime("%Y-%m-%d"),
                 "tipo": tipo,
@@ -244,7 +251,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Numero non valido")
         return
 
-    # -------- FALLBACK --------
     await update.message.reply_text("Usa i pulsanti.", reply_markup=menu_principale())
 
 # ---------------- WEBHOOK ----------------
