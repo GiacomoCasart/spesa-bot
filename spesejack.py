@@ -270,7 +270,7 @@ flask_app = Flask(__name__)
 def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, app.bot)
-    asyncio.create_task(app.process_update(update))
+    asyncio.run(app.process_update(update))
     return "ok"
 
 @flask_app.route("/")
