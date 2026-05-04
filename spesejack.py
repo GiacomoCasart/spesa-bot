@@ -93,7 +93,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ["➖ Spesa", "➕ Entrata"],
         ["💰 Saldo", "📊 Riepilogo"],
-        ["📂 Storico", "🧾 Ultime"]
+        ["📂 Storico", "🧾 Ultime"],
+        ["❌ Annulla"]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -115,6 +116,21 @@ async def scegli_categoria(update, context):
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
+    if text == "❌ Annulla":
+        context.user_data.clear()
+
+        keyboard = [
+            ["➖ Spesa", "➕ Entrata"],
+            ["💰 Saldo", "📊 Riepilogo"],
+            ["📂 Storico", "🧾 Ultime"],
+            ["❌ Annulla"]
+        ]
+
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+        await update.message.reply_text("Operazione annullata.", reply_markup=reply_markup)
+        return
+    
     if text == "➖ Spesa":
         context.user_data["tipo"] = "uscita"
         await scegli_categoria(update, context)
