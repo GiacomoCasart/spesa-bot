@@ -2,6 +2,7 @@ import os
 import csv
 import json
 from datetime import datetime
+from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -45,6 +46,8 @@ def salva_spesa(spesa):
         )
         writer.writerow(spesa)
 
+SALDI = carica_saldi()
+
 # ---------------- ANALISI DATI ----------------
 
 def calcola_riepilogo_mese(mese):
@@ -84,8 +87,6 @@ def ultime_operazioni(n=5):
         reader = list(csv.DictReader(f))
         return reader[-n:]
 
-SALDI = carica_saldi()
-
 # ---------------- BOT ----------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,7 +115,6 @@ async def scegli_categoria(update, context):
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    # MENU
     if text == "➖ Spesa":
         context.user_data["tipo"] = "uscita"
         await scegli_categoria(update, context)
@@ -126,20 +126,14 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "💰 Saldo":
         totale = SALDI["banca"] + SALDI["salvadanaio"]
         await update.message.reply_text(
-            f"Banca: {SALDI['banca']}€\n"
-            f"Salvadanaio: {SALDI['salvadanaio']}€\n"
-            f"Totale: {totale}€"
+            f"Banca: {SALDI['banca']}€\nSalvadanaio: {SALDI['salvadanaio']}€\nTotale: {totale}€"
         )
 
     elif text == "📊 Riepilogo":
         mese = datetime.now().strftime("%Y-%m")
         entrate, uscite, categorie = calcola_riepilogo_mese(mese)
 
-        msg = f"📊 {mese}\n\n"
-        msg += f"Entrate: +{entrate}€\n"
-        msg += f"Uscite: -{uscite}€\n\n"
-        msg += f"Saldo: {entrate - uscite}€\n\n"
-
+        msg = f"📊 {mese}\n\nEntrate: +{entrate}€\nUscite: -{uscite}€\n\nSaldo: {entrate - uscite}€\n\n"
         for cat, val in categorie.items():
             segno = "+" if val >= 0 else ""
             msg += f"{cat}: {segno}{val}€\n"
@@ -148,54 +142,26 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == "📂 Storico":
         mesi = lista_mesi()
-
         if not mesi:
             await update.message.reply_text("Nessun dato")
             return
 
-        msg = "Mesi disponibili:\n"
-        for m in mesi:
-            msg += f"- {m}\n"
-
-        msg += "\nScrivi il mese (es: 2026-05)"
+        msg = "Mesi disponibili:\n" + "\n".join(mesi)
+        msg += "\n\nScrivi il mese (es: 2026-05)"
         context.user_data["stato"] = "scegli_mese"
-
         await update.message.reply_text(msg)
-
-    elif text == "🧾 Ultime":
-        ops = ultime_operazioni()
-
-        if not ops:
-            await update.message.reply_text("Nessuna operazione")
-            return
-
-        msg = "🧾 Ultime operazioni:\n\n"
-
-        for o in ops:
-            segno = "+" if o["tipo"] == "entrata" else "-"
-            msg += f"{o['data']} | {o['categoria']} | {segno}{o['importo']}€\n"
-
-        await update.message.reply_text(msg)
-
-    # -------- SELEZIONE MESE --------
 
     elif context.user_data.get("stato") == "scegli_mese":
         mese = text
         entrate, uscite, categorie = calcola_riepilogo_mese(mese)
 
-        msg = f"📊 {mese}\n\n"
-        msg += f"Entrate: +{entrate}€\n"
-        msg += f"Uscite: -{uscite}€\n\n"
-        msg += f"Saldo: {entrate - uscite}€\n\n"
-
+        msg = f"📊 {mese}\n\nEntrate: +{entrate}€\nUscite: -{uscite}€\n\nSaldo: {entrate - uscite}€\n\n"
         for cat, val in categorie.items():
             segno = "+" if val >= 0 else ""
             msg += f"{cat}: {segno}{val}€\n"
 
         context.user_data.clear()
         await update.message.reply_text(msg)
-
-    # -------- CATEGORIA --------
 
     elif context.user_data.get("stato") == "categoria":
         if text == "altro":
@@ -211,8 +177,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["stato"] = "conto"
         await update.message.reply_text("Conto? (banca/salvadanaio)")
 
-    # -------- CONTO --------
-
     elif context.user_data.get("stato") == "conto":
         if text not in ["banca", "salvadanaio"]:
             await update.message.reply_text("Scrivi: banca o salvadanaio")
@@ -221,8 +185,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["conto"] = text
         context.user_data["stato"] = "importo"
         await update.message.reply_text("Importo?")
-
-    # -------- IMPORTO --------
 
     elif context.user_data.get("stato") == "importo":
         try:
@@ -256,7 +218,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("Numero non valido")
 
-# ---------------- AVVIO ----------------
+# ---------------- WEBHOOK ----------------
 
 inizializza_file()
 
@@ -265,5 +227,14 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("Bot avviato...")
-app.run_polling()
+flask_app = Flask(__name__)
+
+@flask_app.route(f"/{TOKEN}", methods=["POST"])
+async def webhook():
+    data = request.get_json(force=True)
+    update = Update.de_json(data, app.bot)
+    await app.process_update(update)
+    return "ok"
+
+if __name__ == "__main__":
+    flask_app.run(host="0.0.0.0", port=10000)
