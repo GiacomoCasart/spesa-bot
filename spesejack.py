@@ -46,9 +46,7 @@ SALDI = carica_saldi()
 # ---------------- ANALISI ----------------
 
 def calcola_riepilogo_mese(mese):
-    entrate = 0
-    uscite = 0
-    categorie = {}
+    entrate, uscite, categorie = 0, 0, {}
 
     if not os.path.isfile(FILE):
         return 0, 0, {}
@@ -61,9 +59,8 @@ def calcola_riepilogo_mese(mese):
 
             imp = float(r["importo"])
             cat = r["categoria"]
-            tipo = r["tipo"]
 
-            if tipo == "entrata":
+            if r["tipo"] == "entrata":
                 entrate += imp
                 categorie[cat] = categorie.get(cat, 0) + imp
             else:
@@ -78,18 +75,14 @@ def lista_mesi():
 
     mesi = set()
     with open(FILE, "r") as f:
-        reader = csv.DictReader(f)
-        for r in reader:
+        for r in csv.DictReader(f):
             mesi.add(r["data"][:7])
     return sorted(mesi, reverse=True)
 
 def ultime_operazioni(n=5):
     if not os.path.isfile(FILE):
         return []
-
-    with open(FILE, "r") as f:
-        reader = list(csv.DictReader(f))
-        return reader[-n:]
+    return list(csv.DictReader(open(FILE)))[-n:]
 
 # ---------------- UI ----------------
 
@@ -111,7 +104,6 @@ async def export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not os.path.isfile(FILE):
         await update.message.reply_text("Nessun file disponibile")
         return
-
     with open(FILE, "rb") as f:
         await update.message.reply_document(f, filename="spese.csv")
 
@@ -119,23 +111,24 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     stato = context.user_data.get("stato")
 
+    # ANNULLA
     if text == "❌ Annulla":
         context.user_data.clear()
         await update.message.reply_text("Operazione annullata.", reply_markup=menu_principale())
         return
 
+    # BACKUP
     if text == "📥 Backup":
         await export(update, context)
         return
 
+    # STATI
     if stato == "scegli_mese":
-        mese = text
-        entrate, uscite, categorie = calcola_riepilogo_mese(mese)
+        entrate, uscite, categorie = calcola_riepilogo_mese(text)
 
-        msg = f"📊 {mese}\n\nEntrate: +{entrate}€\nUscite: -{uscite}€\n\nSaldo: {entrate - uscite}€\n\n"
-        for cat, val in categorie.items():
-            segno = "+" if val >= 0 else ""
-            msg += f"{cat}: {segno}{val}€\n"
+        msg = f"📊 {text}\n\nEntrate: +{entrate}€\nUscite: -{uscite}€\n\nSaldo: {entrate - uscite}€\n\n"
+        for c, v in categorie.items():
+            msg += f"{c}: {'+' if v>=0 else ''}{v}€\n"
 
         context.user_data.clear()
         await update.message.reply_text(msg, reply_markup=menu_principale())
@@ -146,15 +139,15 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         categorie = CATEGORIE_USCITE if tipo == "uscita" else CATEGORIE_ENTRATE
 
         if text not in categorie:
-            keyboard = [[c] for c in categorie] + [["❌ Annulla"]]
-            await update.message.reply_text("Scegli categoria:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+            kb = [[c] for c in categorie] + [["❌ Annulla"]]
+            await update.message.reply_text("Scegli categoria:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
             return
 
         context.user_data["categoria"] = text
         context.user_data["stato"] = "conto"
 
-        keyboard = [["banca"], ["salvadanaio"], ["❌ Annulla"]]
-        await update.message.reply_text("Conto?", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+        kb = [["banca"], ["salvadanaio"], ["❌ Annulla"]]
+        await update.message.reply_text("Conto?", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
     if stato == "conto":
@@ -164,7 +157,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["conto"] = text
         context.user_data["stato"] = "importo"
-
         await update.message.reply_text("Importo?", reply_markup=ReplyKeyboardMarkup([["❌ Annulla"]], resize_keyboard=True))
         return
 
@@ -183,7 +175,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 SALDI[conto] += importo
 
             salva_saldi(SALDI)
-
             salva_spesa({
                 "data": datetime.now().strftime("%Y-%m-%d"),
                 "tipo": tipo,
@@ -194,69 +185,57 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             context.user_data.clear()
             await update.message.reply_text("✅ Salvato!", reply_markup=menu_principale())
-
         except:
-            await update.message.reply_text("Inserisci un numero valido")
+            await update.message.reply_text("Numero non valido")
         return
 
     # MENU
     if text == "➖ Spesa":
-        context.user_data["tipo"] = "uscita"
-        context.user_data["stato"] = "categoria"
-        keyboard = [[c] for c in CATEGORIE_USCITE] + [["❌ Annulla"]]
-        await update.message.reply_text("Scegli categoria:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+        context.user_data.update({"tipo": "uscita", "stato": "categoria"})
+        kb = [[c] for c in CATEGORIE_USCITE] + [["❌ Annulla"]]
+        await update.message.reply_text("Scegli categoria:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    elif text == "➕ Entrata":
-        context.user_data["tipo"] = "entrata"
-        context.user_data["stato"] = "categoria"
-        keyboard = [[c] for c in CATEGORIE_ENTRATE] + [["❌ Annulla"]]
-        await update.message.reply_text("Scegli categoria:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+    if text == "➕ Entrata":
+        context.user_data.update({"tipo": "entrata", "stato": "categoria"})
+        kb = [[c] for c in CATEGORIE_ENTRATE] + [["❌ Annulla"]]
+        await update.message.reply_text("Scegli categoria:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    elif text == "💰 Saldo":
-        totale = SALDI["banca"] + SALDI["salvadanaio"]
+    if text == "💰 Saldo":
+        tot = SALDI["banca"] + SALDI["salvadanaio"]
         await update.message.reply_text(
-            f"Banca: {SALDI['banca']}€\nSalvadanaio: {SALDI['salvadanaio']}€\nTotale: {totale}€",
+            f"Banca: {SALDI['banca']}€\nSalvadanaio: {SALDI['salvadanaio']}€\nTotale: {tot}€",
             reply_markup=menu_principale()
         )
         return
 
-    elif text == "📊 Riepilogo":
+    if text == "📊 Riepilogo":
         mese = datetime.now().strftime("%Y-%m")
-        entrate, uscite, categorie = calcola_riepilogo_mese(mese)
-
-        msg = f"📊 {mese}\n\nEntrate: +{entrate}€\nUscite: -{uscite}€\n\nSaldo: {entrate - uscite}€\n\n"
-        for cat, val in categorie.items():
-            segno = "+" if val >= 0 else ""
-            msg += f"{cat}: {segno}{val}€\n"
-
+        e,u,c = calcola_riepilogo_mese(mese)
+        msg = f"📊 {mese}\n\nEntrate: +{e}€\nUscite: -{u}€\n\nSaldo: {e-u}€\n\n"
+        for k,v in c.items():
+            msg += f"{k}: {'+' if v>=0 else ''}{v}€\n"
         await update.message.reply_text(msg, reply_markup=menu_principale())
         return
 
-    elif text == "📂 Storico":
+    if text == "📂 Storico":
         mesi = lista_mesi()
         if not mesi:
             await update.message.reply_text("Nessun dato", reply_markup=menu_principale())
             return
-
-        msg = "Mesi disponibili:\n" + "\n".join(mesi)
-        msg += "\n\nScrivi il mese (es: 2026-05)"
         context.user_data["stato"] = "scegli_mese"
-        await update.message.reply_text(msg)
+        await update.message.reply_text("Mesi:\n"+"\n".join(mesi))
         return
 
-    elif text == "🧾 Ultime":
+    if text == "🧾 Ultime":
         ops = ultime_operazioni()
         if not ops:
             await update.message.reply_text("Nessuna operazione", reply_markup=menu_principale())
             return
-
-        msg = "🧾 Ultime operazioni:\n\n"
+        msg = "🧾 Ultime:\n\n"
         for o in ops:
-            segno = "+" if o["tipo"] == "entrata" else "-"
-            msg += f"{o['data']} | {o['categoria']} | {segno}{o['importo']}€\n"
-
+            msg += f"{o['data']} | {o['categoria']} | {'+' if o['tipo']=='entrata' else '-'}{o['importo']}€\n"
         await update.message.reply_text(msg, reply_markup=menu_principale())
         return
 
@@ -267,19 +246,16 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 inizializza_file()
 
 app = ApplicationBuilder().token(TOKEN).build()
-
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("menu", start))
 app.add_handler(CommandHandler("export", export))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-loop = asyncio.get_event_loop()
-
-async def setup():
+async def main():
     await app.initialize()
     await app.start()
 
-loop.run_until_complete(setup())
+asyncio.run(main())
 
 flask_app = Flask(__name__)
 
@@ -287,7 +263,7 @@ flask_app = Flask(__name__)
 def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, app.bot)
-    loop.create_task(app.process_update(update))
+    asyncio.create_task(app.process_update(update))
     return "ok"
 
 @flask_app.route("/")
