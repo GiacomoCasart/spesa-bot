@@ -106,24 +106,29 @@ def calcola_saldi():
 def calcola_saldo_fino_a(mese):
     saldi = {"banca": 0, "salvadanaio": 0}
 
-    if not os.path.isfile(FILE):
-        return saldi
+    conn = get_conn()
+    cur = conn.cursor()
 
-    with open(FILE, "r") as f:
-        for r in csv.DictReader(f):
-            if r["data"][:7] > mese:
-                continue
+    cur.execute("""
+        SELECT tipo, importo, conto, data
+        FROM spese
+    """)
 
-            conto = parse_conto(r["conto"])
-            if conto not in saldi:
-                continue
+    for tipo, imp, conto, data in cur.fetchall():
 
-            imp = parse_importo(r["importo"])
+        if data[:7] > mese:
+            continue
 
-            if r["tipo"] == "entrata":
-                saldi[conto] += imp
-            else:
-                saldi[conto] -= imp
+        if conto not in saldi:
+            continue
+
+        if tipo == "entrata":
+            saldi[conto] += imp
+        else:
+            saldi[conto] -= imp
+
+    cur.close()
+    conn.close()
 
     return saldi
 
@@ -132,43 +137,72 @@ def calcola_saldo_fino_a(mese):
 def calcola_riepilogo_mese(mese):
     entrate, uscite, categorie = 0, 0, {}
 
-    if not os.path.isfile(FILE):
-        return 0, 0, {}
+    conn = get_conn()
+    cur = conn.cursor()
 
-    with open(FILE, "r") as f:
-        for r in csv.DictReader(f):
-            if not r["data"].startswith(mese):
-                continue
+    cur.execute("""
+        SELECT tipo, categoria, importo
+        FROM spese
+        WHERE data LIKE %s
+    """, (f"{mese}%",))
 
-            imp = parse_importo(r["importo"])
-            cat = r["categoria"]
+    for tipo, cat, imp in cur.fetchall():
 
-            if r["tipo"] == "entrata":
-                entrate += imp
-                categorie[cat] = categorie.get(cat, 0) + imp
-            else:
-                uscite += imp
-                categorie[cat] = categorie.get(cat, 0) - imp
+        if tipo == "entrata":
+            entrate += imp
+            categorie[cat] = categorie.get(cat, 0) + imp
+        else:
+            uscite += imp
+            categorie[cat] = categorie.get(cat, 0) - imp
+
+    cur.close()
+    conn.close()
 
     return entrate, uscite, categorie
 
 def lista_mesi():
-    if not os.path.isfile(FILE):
-        return []
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT data FROM spese")
 
     mesi = set()
-    with open(FILE, "r") as f:
-        for r in csv.DictReader(f):
-            mesi.add(r["data"][:7])
+
+    for (data,) in cur.fetchall():
+        mesi.add(data[:7])
+
+    cur.close()
+    conn.close()
 
     return sorted(mesi, reverse=True)
 
 def ultime_operazioni(n=5):
-    if not os.path.isfile(FILE):
-        return []
+    conn = get_conn()
+    cur = conn.cursor()
 
-    with open(FILE, "r") as f:
-        return list(csv.DictReader(f))[-n:]
+    cur.execute("""
+        SELECT data, tipo, categoria, importo
+        FROM spese
+        ORDER BY id DESC
+        LIMIT %s
+    """, (n,))
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    ops = []
+
+    for data, tipo, categoria, importo in rows:
+        ops.append({
+            "data": data,
+            "tipo": tipo,
+            "categoria": categoria,
+            "importo": importo
+        })
+
+    return reversed(ops)
 
 # ---------------- UI ----------------
 
@@ -349,11 +383,11 @@ app.add_handler(CommandHandler("menu", start))
 app.add_handler(CommandHandler("export", export))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-async def setup():
-    await app.initialize()
-    await app.start()
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 
-asyncio.run(setup())
+loop.run_until_complete(app.initialize())
+loop.run_until_complete(app.start())
 
 # ---------------- WEB SERVER ----------------
 
@@ -363,7 +397,9 @@ flask_app = Flask(__name__)
 def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, app.bot)
-    asyncio.run(app.process_update(update))
+
+    loop.run_until_complete(app.process_update(update))
+
     return "ok"
 
 @flask_app.route("/")
