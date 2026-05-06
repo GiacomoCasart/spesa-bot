@@ -1,6 +1,7 @@
 import os
 import csv
 import asyncio
+import psycopg2
 from datetime import datetime
 from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup
@@ -8,6 +9,11 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 TOKEN = os.environ.get("TOKEN")
 FILE = "spese.csv"
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_conn():
+    return psycopg2.connect(DATABASE_URL)
 
 CATEGORIE_USCITE = ["cibo", "affitto", "svago", "trasporti", "altro"]
 CATEGORIE_ENTRATE = ["stipendio", "regalo", "rimborso", "altro"]
@@ -24,12 +30,42 @@ def inizializza_file():
             writer.writeheader()
 
 def salva_spesa(spesa):
-    with open(FILE, "a", newline="") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=["data", "tipo", "categoria", "importo", "conto"]
-        )
-        writer.writerow(spesa)
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO spese (data, tipo, categoria, importo, conto)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (
+        spesa["data"],
+        spesa["tipo"],
+        spesa["categoria"],
+        spesa["importo"],
+        spesa["conto"]
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS spese (
+        id SERIAL PRIMARY KEY,
+        data TEXT,
+        tipo TEXT,
+        categoria TEXT,
+        importo FLOAT,
+        conto TEXT
+    )
+    """)
+
+    conn.commit()
+    cur.close()
+    conn.close()
 
 # ---------------- UTILS ----------------
 
@@ -47,21 +83,23 @@ def parse_conto(val):
 def calcola_saldi():
     saldi = {"banca": 0, "salvadanaio": 0}
 
-    if not os.path.isfile(FILE):
-        return saldi
+    conn = get_conn()
+    cur = conn.cursor()
 
-    with open(FILE, "r") as f:
-        for r in csv.DictReader(f):
-            conto = parse_conto(r["conto"])
-            if conto not in saldi:
-                continue
+    cur.execute("SELECT tipo, importo, conto FROM spese")
 
-            imp = parse_importo(r["importo"])
+    for tipo, imp, conto in cur.fetchall():
 
-            if r["tipo"] == "entrata":
-                saldi[conto] += imp
-            else:
-                saldi[conto] -= imp
+        if conto not in saldi:
+            continue
+
+        if tipo == "entrata":
+            saldi[conto] += imp
+        else:
+            saldi[conto] -= imp
+
+    cur.close()
+    conn.close()
 
     return saldi
 
@@ -302,6 +340,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- START BOT ----------------
 
 inizializza_file()
+init_db()
 
 app = ApplicationBuilder().token(TOKEN).build()
 
