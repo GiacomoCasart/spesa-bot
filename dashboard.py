@@ -12,6 +12,7 @@ try:
     DATABASE_URL = st.secrets["DATABASE_URL"]
 except:
     DATABASE_URL = os.getenv("DATABASE_URL")
+
 # ---------------- DB ----------------
 
 conn = psycopg2.connect(DATABASE_URL)
@@ -142,6 +143,70 @@ c3.metric(
 st.divider()
 
 st.markdown("<br>", unsafe_allow_html=True)
+
+# ---------------- ANDAMENTO ----------------
+
+st.subheader("📈 Andamento saldo")
+
+tipo_andamento = st.selectbox(
+    "Periodo grafico",
+    ["Mese corrente", "Storico completo"]
+)
+
+if tipo_andamento == "Storico completo":
+
+    conn_and = psycopg2.connect(DATABASE_URL)
+
+    df_andamento = pd.read_sql(
+        "SELECT * FROM spese ORDER BY data ASC",
+        conn_and
+    )
+
+    conn_and.close()
+
+else:
+
+    df_andamento = df.sort_values("data")
+
+saldo_progressivo = 0
+andamento = []
+
+for _, row in df_andamento.iterrows():
+
+    if row["tipo"] == "entrata":
+        saldo_progressivo += row["importo"]
+    else:
+        saldo_progressivo -= row["importo"]
+
+    andamento.append(saldo_progressivo)
+
+df_andamento["saldo_progressivo"] = andamento
+
+df_andamento["data"] = pd.to_datetime(
+    df_andamento["data"]
+)
+
+fig_and, ax_and = plt.subplots(figsize=(7, 3))
+
+ax_and.plot(
+    df_andamento["data"],
+    df_andamento["saldo_progressivo"],
+    linewidth=3
+)
+
+ax_and.grid(True)
+
+ax_and.set_xlabel("")
+ax_and.set_ylabel("€")
+
+fig_and.autofmt_xdate()
+
+st.pyplot(
+    fig_and,
+    use_container_width=True
+)
+
+st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ---------------- TABELLA ----------------
 
