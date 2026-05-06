@@ -1,3 +1,7 @@
 python-telegram-bot==22.7
 flask
 psycopg2-binary
+streamlit
+pandas
+matplotlib
+python-dotenv

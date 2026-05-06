@@ -8,7 +8,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+try:
+    DATABASE_URL = st.secrets["DATABASE_URL"]
+except:
+    DATABASE_URL = os.getenv("DATABASE_URL")
 # ---------------- DB ----------------
 
 conn = psycopg2.connect(DATABASE_URL)
