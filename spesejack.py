@@ -15,7 +15,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
-CATEGORIE_USCITE = ["cibo", "affitto", "svago", "trasporti", "altro"]
+CATEGORIE_USCITE = ["cibo", "affitto", "svago", "trasporti", "alcohol", "terapia", "e-cig", "altro"]
 CATEGORIE_ENTRATE = ["stipendio", "regalo", "rimborso", "altro"]
 
 # ---------------- FILE ----------------
